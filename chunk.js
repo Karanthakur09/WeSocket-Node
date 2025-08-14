@@ -85,7 +85,9 @@ app.get('/vedio', (req, res) => {
         // Stream only the requested slice
         const fileStream = fs.createReadStream(vedioPath, { start, end });
         pipeline(fileStream, res, (e) => {
-            if (e) console.error('Stream error:', e);
+             if (e && e.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+        console.error('Stream error:', e);
+    }
         });
     });
 
