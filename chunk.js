@@ -28,42 +28,66 @@ app.get('/', (req, res) => {
 
 //showing vedio over the network in UI
 app.get('/vedio', (req, res) => {
+
     const vedioPath = path.join(__dirname, 'bigvedio.mp4');
+    fs.stat(vedioPath, (err, stat) => {
 
-    //getting the size of the size of the file using fs.stat gives the meta data of file
-    const videoSize = fs.statSync(videoPath).size;
-    // Get "Range" header from request
-    const range = req.headers.range;
+        if (err) {
+            if (err.code === 'ENOENT') return res.sendStatus(404); // file not found
+            return res.status(500).send('File error');
+        }
+        // Get "Range" header from request
+        const fileSize = stat.size;
+        const range = req.headers.range;
 
-    // Let clients know we support ranges
-    res.setHeader('Accept-Ranges', 'bytes');
+        // Let clients know we support ranges
+        res.setHeader('Accept-Ranges', 'bytes');
 
-    // If no Range header, you can send the whole file (200) — many players still work.
-    if (!range) {
-        res.writeHead(200, {
+        // If no Range header, you can send the whole file (200) — many players still work.
+        if (!range) {
+            res.writeHead(200, {
+                'Content-Type': 'video/mp4',
+                'Content-Length': fileSize,
+            });
+            return pipeline(fs.createReadStream(vedioPath), res, (e) => { //cleaner way to use pipe in nodeJs stream, handles any errors
+                if (e) console.error('Pipeline error:', e);
+            });
+        }
+
+        // Parse Range header: bytes=start-end (end optional)
+        const match = range.match(/bytes=(\d*)-(\d*)/);
+
+        if (!match) {
+            res.setHeader('Content-Range', `bytes */${fileSize}`);
+            return res.sendStatus(416); // Range Not Satisfiable
+        }
+        let start = match[1] ? parseInt(match[1], 10) : 0;
+        let end = match[2] ? parseInt(match[2], 10) : fileSize - 1;
+
+        // Validate range
+        if (isNaN(start) || isNaN(end) || start > end || start >= fileSize) {
+            res.setHeader('Content-Range', `bytes */${fileSize}`);
+            return res.sendStatus(416);
+        }
+
+        const chunkSize = end - start + 1;
+
+        // Send partial content headers
+        res.writeHead(206, {
             'Content-Type': 'video/mp4',
-            'Content-Length': fileSize,
+            'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+            'Content-Length': chunkSize,
+            'Accept-Ranges': 'bytes',
+            // optional caching:
+            // 'Cache-Control': 'public, max-age=0, must-revalidate',
         });
-        return pipeline(fs.createReadStream(videoPath), res, (e) => { //cleaner way to use pipe in nodeJs stream, handles any errors
-            if (e) console.error('Pipeline error:', e);
+
+        // Stream only the requested slice
+        const fileStream = fs.createReadStream(vedioPath, { start, end });
+        pipeline(fileStream, res, (e) => {
+            if (e) console.error('Stream error:', e);
         });
-    }
-
-    // Parse Range header: bytes=start-end (end optional)
-    const match = range.match(/bytes=(\d*)-(\d*)/);
-
-    if (!match) {
-        res.setHeader('Content-Range', `bytes */${fileSize}`);
-        return res.sendStatus(416); // Range Not Satisfiable
-    }
-
-
-    const stream = fs.createReadStream(vedioPath);
-    res.writeHead(200, {
-        "Content-Type": "video/mp4"
     });
-    // Pipe data to browser chunk by chunk
-    stream.pipe(res);
 
 })
 
